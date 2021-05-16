@@ -273,7 +273,8 @@
             const hue = parseInt(document.getElementById('hue').value)
 
             const mainColor = hslToHex(hue, 100, 70)
-            const backColor = hslToHex(hue, 100, 94)
+            const stop1Color = hslToHex(hue, 100, 98)
+            const stop2Color = hslToHex(hue, 100, 93)
 
             const titleFontSize = 51
             const titleY = 150
@@ -296,11 +297,33 @@
 >
     <defs>
         <style>@import url('https://fonts.googleapis.com/css2?family=Raleway');</style>
+        <linearGradient id="linearGradient886">
+            <stop
+                style="stop-color:#${stop1Color};stop-opacity:1"
+                offset="0"
+                id="stop965"
+            />
+            <stop
+                style="stop-color:#${stop2Color};stop-opacity:1"
+                offset="1"
+                id="stop967"
+            />
+        </linearGradient>
+        <linearGradient
+            xlink:href="#linearGradient886"
+            id="linearGradient972"
+            x1="0"
+            y1="0"
+            x2="300"
+            y2="1000"
+            gradientUnits="userSpaceOnUse"
+        />
     </defs>
 
     <g id="backLayer">
         <rect
-            style="fill: #${backColor};"
+            style="fill:url(#linearGradient972);fill-opacity:1;stroke:#ffffff;stroke-width:0.336898;stroke-miterlimit:4;stroke-dasharray:none"
+            id="rect872"
             width="1000"
             height="300"
             x="0"
