@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Raleway&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div>
+        <input type="text" id="name" value="name">
+        <input type="text" id="desc" value="Short description">
+        <input type="number" id="hue" value="0" min="0" max="255">
+        <button id="gen">Generate SVG</button>
+    </div>
+    <div id="container" style="pointer-events: none; width: 1000px; height: 300px; border: 1px solid grey;"></div>
+    <div>
+        <textarea id="raw-svg"
+            style="width: 1000px; height: 300px; border: 1px solid grey; outline: 0; padding: 0; resize: none;"></textarea>
+    </div>
+    <div>
+        <textarea id="base64"
+            style="width: 1000px; height: 300px; border: 1px solid grey; outline: 0; padding: 0; resize: none;"></textarea>
+    </div>
+
+    <script>
+        "use strict"; // we are overriding arguments, so this is important!
+
+        const regExpGlobal = "g";
+        function escapeRegExp(string) {
+            return string.replace(/[.*+\-?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
+        }
+        function findAllMatches(string, regexp, group) {
+            let match, matches = [];
+            while ((match = regexp.exec(string))) {
+                if (match[group]) {
+                    matches.push(typeof group === "number" ? match[group] : match);
+                }
+            } return matches;
+        }
+
+        // note: this funky looking positive lookbehind regular expression is necessary to match contents inside of tags <...>. this 
+        // is due to that literally any characters except <&" are allowed to be put next to everywhere in XML. as even > is an allowed
+        // character, simply checking for (?<=<[^>]*) would not do the trick if e.g. > is used inside of a tag attribute.
+        const emptyRegExp = new RegExp(), tagPattern = /(?<=<\/?[^?!\s\/>]+\b(?:\s+[^=\s>]+\s*=\s*(?:"[^"]*"|'[^']*'))*%1)/.source,
+            betweenBracketsPattern = tagPattern.replace(/(?<=(?<!\(\?)<)/, "(?:!\\s*(?:--(?:[^-]|-[^-])*--\\s*)|!\\[(?:CDATA|.*?)\\[(?:[^\\]]|][^\\]]|]][^>])*]]|!DOCTYPE\\s+(?:[^>[]|\\[[\\s\\S]*?\\])*|\\?(?:[^?]|\\?[^>])*\\?|").replace("%1", "\\s*[!?/]?)>") + "%1(?=<)",
+            prologPattern = tagPattern.replace(/(?<=(?<!\(\?)<).*(?=\\b)/, "\\?xml")
+        function findAllMatchesInTags(xml, regexp, options = { tagPattern, lookbehind: emptyRegExp, lookbehindPattern: String(), group: 0 }) {
+            const lookbehindPattern = options.lookbehindPattern || (options.lookbehind || emptyRegExp).source;
+            return findAllMatches(xml, new RegExp((options.tagPattern || tagPattern).replace("%1", lookbehindPattern) + regexp.source, regExpGlobal), options.group);
+        }
+        // include non-tags means declaration like <! comments / doctype declaration and <? prolog / processing instructions
+        function replaceInTags(xml, regexp, replacement, options = { tagPattern, lookbehind: emptyRegExp, lookbehindPattern: String() }) {
+            const lookbehindPattern = options.lookbehindPattern || (options.lookbehind || emptyRegExp).source;
+            return xml.replace(new RegExp((options.tagPattern || tagPattern).replace("%1", lookbehindPattern) + regexp.source, regExpGlobal), replacement);
+        }
+        function replaceBetweenTags(xml, regexp, replacement, options = { lookbehind: emptyRegExp, lookbehindPattern: String(), lookahead: emptyRegExp, lookaheadPattern: String(), includeNonTags: false }) {
+            const lookbehindPattern = "\\s*/?>" + (options.lookbehindPattern || (options.lookbehind || emptyRegExp).source),
+                lookaheadPattern = options.lookaheadPattern || (options.lookahead || emptyRegExp).source + "<[^?!]";
+            return replaceInTags(xml, new RegExp(regexp.source + `(?=${lookaheadPattern})`), replacement, { lookbehindPattern });
+        }
+        function replaceBetweenBrackets(xml, regexp, replacement) {
+            return xml.replace(new RegExp(betweenBracketsPattern.replace("%1", regexp.source), regExpGlobal), replacement);
+        }
+
+        const strict = "strict", defaultOptions = {
+            removeComments: true,
+            removeWhitespaceBetweenTags: true, // "strict", will not consider prolog / doctype, as tags
+            collapseWhitespaceInTags: true,
+            collapseEmptyElements: true,
+            trimWhitespaceFromTexts: false,
+            collapseWhitespaceInTexts: false,
+            collapseWhitespaceInProlog: true,
+            collapseWhitespaceInDocType: true,
+            removeUnusedNamespaces: true,
+            removeUnusedDefaultNamespace: true,
+            shortenNamespaces: true,
+            ignoreCData: true
+        };
+
+        function ignoreCData(replacement) {
+            return function (match, offset, string, groups) {
+                // the interface of replacement functions contains any number of arguments at the second position, for contents of capturing groups.
+                // the last argument is either an object (for browsers supporting named capturing groups) or the examined string otherwise.
+                let argument = arguments.length - 1, captures;
+                groups = typeof arguments[argument] === "object" ? arguments[argument--] : undefined;
+                string = arguments[argument--]; offset = arguments[argument--];
+                captures = Array.prototype.slice.call(arguments, 1, argument + 1);
+
+                // check if the offset lies inside of a CData section
+                if (/<!\[CDATA\[(?![\s\S]*?]]>)/.test(string.substr(0, offset))) {
+                    return match; // if so do not replace anything
+                }
+
+                // if the replacement is a function, apply our arguments
+                if (typeof replacement === "function") {
+                    return replacement.apply(this, arguments);
+                }
+
+                // otherwise execute the replacement of the capturing groups manually
+                return captures ? replacement.replace(/(?<!\$)\$(\d+|\&)/g, (group, number) =>
+                    ["0", "&"].includes(number) ? match : captures[parseInt(number - 1)] || String()) : replacement;
+            };
+        }
+
+        window.XMLMinify = function (xml, options) {
+            // apply the default options
+            options = {
+                ...defaultOptions,
+                ...(options || {})
+            };
+
+            // decide on whether to use the ignoreCData replacement function or not, to improve performance
+            const replacer = options.ignoreCData && xml.includes("<![CDATA[") ? ignoreCData : replacement => replacement, emptyReplacer = replacer(String());
+
+            function removeComments(xml) {
+                return xml.replace(/<!\s*(?:--(?:[^-]|-[^-])*--\s*)>/g, emptyReplacer);
+            }
+
+            // remove XML comments <!-- ... -->
+            if (options.removeComments) {
+                xml = removeComments(xml);
+            }
+
+            // remove whitespace only between tags <anyTag/>   <anyOtherTag/>
+            if (options.removeWhitespaceBetweenTags) {
+                xml = (options.removeWhitespaceBetweenTags === strict ? replaceBetweenTags :
+                    // special case: also consider the prolog <?xml ... ?>, processing instructions <?pi ... ?>, the document type declaration <!DOCTYPE ... >, CDATA sections <![CDATA[ ... ]]> and comments <!-- ... --> as tags here
+                    replaceBetweenBrackets)(xml, /\s+/, emptyReplacer);
+            }
+
+            function collapseWhitespaceInTags(xml, options = { tagPattern }) {
+                xml = replaceInTags(xml, /\s+/, replacer(" "), options); // collapse whitespace between attributes
+                xml = replaceInTags(xml, /\s*=\s*/, replacer("="), { ...options, lookbehind: /\s+[^=\s>]+/ }); // remove leading / tailing whitespace around attribute equal signs
+                xml = replaceInTags(xml, /\s*(?=[/?]?>)/, emptyReplacer, options); // remove whitespace before closing > /> ?> of tags
+                return xml;
+            }
+
+            // remove / collapse whitespace in tags <anyTag  attributeA  =  "..."  attributeB  =  "..."> ... </anyTag  >
+            if (options.collapseWhitespaceInTags) {
+                xml = collapseWhitespaceInTags(xml);
+            }
+
+            // collapse elements with start / end tags and no content to empty element tags <anyTag anyAttribute = "..." ></anyTag >
+            if (options.collapseEmptyElements) {
+                xml = xml.replace(/<([^\s\/>]+)([^<]*?)(?<!\/)><\/\1\s*>/g, replacer("<$1$2/>"));
+            }
+
+            // remove / trim whitespace in texts like <anyTag>  foo  </anyTag>
+            if (options.trimWhitespaceFromTexts) {
+                xml = replaceBetweenTags(xml, /\s*([\s\S]*?)\s*/, replacer("$1"))
+
+                // special case: treat CDATA sections as text, so also remove whitespace between CDATA end tags and other tags
+                xml = xml.replace(/(?<=<!\[CDATA\[[\s\S]*?]]>)\s+/g, String());
+            }
+
+            // collapse whitespace in texts like <anyTag>foo    bar   baz</anyTag>
+            if (options.collapseWhitespaceInTexts) {
+                xml = replaceBetweenTags(xml, /\s+/, replacer(" "), { lookbehind: /[^<]*/, lookahead: /[^<]*/ });
+            }
+
+            // remove / collapse whitespace in the xml prolog <?xml version = "1.0" ?>
+            if (options.collapseWhitespaceInProlog) {
+                xml = collapseWhitespaceInTags(xml, { tagPattern: prologPattern });
+            }
+
+            // remove / collapse whitespace in the xml document type declaration <!DOCTYPE   DocType   >
+            if (options.collapseWhitespaceInDocType) {
+                xml = xml.replace(/<!DOCTYPE\s+([^\s>[]+)(?:\s+(SYSTEM|PUBLIC)\s+("[^"]*"|'[^']*')(?:\s+("[^"]*"|'[^']*'))?)?(?:\s*\[([\s\S]*?)\])?\s*>/, replacer(
+                    (match, name, type, literal1, literal2, subset) => `<!DOCTYPE ${name}${[type, literal1, literal2]
+                        .map(token => token && " " + token).join(String())}${subset ? `[${(xml => {
+                            // use a simplified minify xml for the internal subset declaration of the document type
+                            xml = removeComments(xml); // remove comments
+                            xml = xml.replace(/\s+/g, " "); // collapse whitespace
+                            xml = xml.replace(/>\s+</g, "><"); // remove any whitespace between declarations (assuming that > cannot appear in the declarations themselves)
+                            return xml.trim();
+                        })(subset)}]` : String()}>`));
+            }
+
+            // remove unused namespaces and shorten the remaining ones to a minimum length
+            if (options.removeUnusedNamespaces || options.shortenNamespaces) {
+                // the search for all xml namespaces in tags could result in some "fake" namespaces if a xmlns:... string is found inside of CDATA
+                // tags. this however comes with no major drawback as we the replace only inside of tags and thus it simplifies the search
+                let all = [...new Set(findAllMatchesInTags(xml, /\s+xmlns:([^\s=]+)\s*=/g, { group: 1 }))];
+
+                // remove namespace declarations which are not used anywhere in the document (limitation: the approach taken here will not consider the structure of the XML document
+                // thus namespaces which might be only used in a certain sub-tree of elements might not be removed, even though they are not used in that sub-tree)
+                if (options.removeUnusedNamespaces) {
+                    let used = [...new Set([
+                        ...findAllMatches(xml, /<([^\s\/>:]+):/g, 1), // look for all tags with namespaces (limitation: might also include tags inside of CData, we ignore that for now)
+                        ...findAllMatchesInTags(xml, /([^\s=:]+):/, { lookbehind: /\s+/, group: 1 }) // look for all attributes with namespaces
+                    ])].filter(ns => ns !== "xmlns"), unused = all.filter(ns => !used.includes(ns));
+
+                    if (unused.length) {
+                        xml = replaceInTags(xml, new RegExp(`\\s+xmlns:(?:${unused.map(escapeRegExp).join("|")})\\s*=\\s*(?:"[^"]*"|'[^']*')`), emptyReplacer);
+                        all = used; // only used namespaces still present in the file
+                    }
+                }
+
+
+                // special case: remove unused default namespace declaration if no tags with no namespace declaration are present
+                // (it's impossible for attributes with namespaces to refer back to the default namespace, so we can omit searching for them)
+                if (options.removeUnusedDefaultNamespace && !/<([^\s\/>:]+)[\s\/>]/.test(xml)) {
+                    xml = replaceInTags(xml, /\s+xmlns\s*=\s*(?:"[^"]*"|'[^']*')/, emptyReplacer);
+                }
+
+                // shorten existing (non already one character namespaces) to a shorter equivalent
+                if (options.shortenNamespaces) {
+                    const startCharset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_",
+                        charset = startCharset.substr(0, 52) + "0123456789-_.";
+                    function firstUnusedNamespace(prefix, length) {
+                        if (!arguments.length) {
+                            for (length = 1; !(prefix = firstUnusedNamespace(
+                                String(), length)); length++);
+                            return prefix;
+                        } else if (!length) {
+                            return prefix;
+                        }
+
+                        const chars = prefix ? charset : startCharset;
+                        for (let char = 0; char < chars.length; char++) {
+                            let ns = firstUnusedNamespace(prefix + chars[char], length - 1);
+                            if (ns && !all.includes(ns)) {
+                                return ns;
+                            }
+                        }
+
+                        return false; // for this length / prefix there is no unused namespace to choose from
+                    }
+
+                    all.forEach((ns, idx) => {
+                        if (ns.length === 1) {
+                            return; // already at minimal length
+                        }
+
+                        // try to shorten the existing namespace to one character first, if it is occupied already, find the first unused one by brute force
+                        let newNs = !all.includes(ns[0]) ? ns[0] : firstUnusedNamespace();
+                        if (ns.length <= newNs.length) {
+                            return; // already at minimal length
+                        }
+
+                        // replace all occurrences of the namespace in the document and mark it as "used"
+                        xml = xml.replace(new RegExp(`<(/)?${ns}:`, regExpGlobal), replacer(`<$1${newNs}:`)); // tags with namespaces
+                        xml = replaceInTags(xml, new RegExp(`${ns}:`), replacer(`${newNs}:`), { lookbehind: /\s+/ }); // attributes with namespaces
+                        xml = replaceInTags(xml, new RegExp(`xmlns:${ns}(?=[\s=])`), replacer(`xmlns:${newNs}`), { lookbehind: /\s+/ }); // namespace declaration
+
+                        all[idx] = newNs;
+                    });
+                }
+            }
+
+            return xml.trim();
+        }
+    </script>
+
+    <script>
+        function hslToHex(h, s, l) {
+            l /= 100
+            const a = s * Math.min(l, 1 - l) / 100
+            const f = n => {
+                const k = (n + h / 30) % 12
+                const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1)
+                return Math.round(255 * color).toString(16).padStart(2, '0')
+            }
+            return `${f(0)}${f(8)}${f(4)}`
+        }
+
+        function update() {
+            const name = document.getElementById('name').value
+            const description = document.getElementById('desc').value
+            const hue = parseInt(document.getElementById('hue').value)
+
+            const mainColor = hslToHex(hue, 100, 70)
+            const backColor = hslToHex(hue, 100, 94)
+
+            const titleFontSize = 51
+            const titleY = 150
+            const descriptionFontSize = 22
+            const titleX = 500
+            const iconSize = 42
+            const iconMargin = iconSize * 1.5
+
+            let svg = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+    xmlns:dc="http://purl.org/dc/elements/1.1/"
+    xmlns:cc="http://creativecommons.org/ns#"
+    xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+    xmlns:svg="http://www.w3.org/2000/svg"
+    xmlns="http://www.w3.org/2000/svg"
+    xmlns:xlink="http://www.w3.org/1999/xlink"
+    width="1000"
+    height="300"
+    version="1.1"
+    id="svg8"
+>
+    <defs>
+        <style>@import url('https://fonts.googleapis.com/css2?family=Raleway');</style>
+        <linearGradient id="linearGradient886">
+            <stop
+                style="stop-color:#${backColor};stop-opacity:0.2"
+                offset="0"
+                id="stop965"
+            />
+            <stop
+                style="stop-color:#${backColor};stop-opacity:1"
+                offset="1"
+                id="stop967"
+            />
+        </linearGradient>
+        <linearGradient
+            xlink:href="#linearGradient886"
+            id="linearGradient972"
+            x1="0"
+            y1="0"
+            x2="300"
+            y2="1000"
+            gradientUnits="userSpaceOnUse"
+        />
+    </defs>
+
+    <metadata id="metadata5" >
+        <rdf:RDF>
+            <cc:Work rdf:about="">
+                <dc:format>image/svg+xml</dc:format>
+                <dc:type
+                    rdf:resource="http://purl.org/dc/dcmitype/StillImage"
+                />
+                <dc:title></dc:title>
+            </cc:Work>
+        </rdf:RDF>
+    </metadata>
+
+    <g id="backLayer">
+        <rect
+            style="fill:url(#linearGradient972);fill-opacity:1;stroke:#ffffff;stroke-width:0.336898;stroke-miterlimit:4;stroke-dasharray:none"
+            id="rect872"
+            width="1000"
+            height="300"
+            x="0"
+            y="0"
+        />
+    </g>
+
+    <g id="mainLayer">
+        <g id="title">
+            <svg
+                width="${iconSize}"
+                height="${iconSize}"
+                fill="#${mainColor}"
+                y="${titleY - Math.round(iconSize / 2) + (iconSize - titleFontSize) / 2}"
+                viewBox="0 0 264.58333 79.374999"
+                version="1.1"
+            >
+                <path
+                    d="m 6.3587262,-43.674173 c -5.63821198,0 -7.9560071,3.950467 -5.1947917,8.86651 L 52.2008,56.046942 c 0.483681,0.861832 1.09213,1.688487 1.795941,2.475019 l 3.114276,5.181216 70.700813,0.05496 -0.7203,0.05496 c 0,0 14.23526,-1.341391 21.48636,10.743193 4.11495,6.858023 17.9927,30.67784 26.80372,45.78769 0.8022,-0.83875 1.56894,-1.8325 2.25736,-3.04621 l 48.28972,-85.076342 c 0.39134,-0.691994 0.75218,-1.416416 1.07262,-2.175741 l 36.41779,-64.853412 c 2.76138,-4.916071 0.44466,-8.86651 -5.1946,-8.86651 h -61.22261 c -5.63821,0 -12.40162,3.950439 -15.16264,8.86651 L 132.29842,53.408708 82.757226,-34.807718 c -2.761188,-4.916071 -9.524398,-8.86651 -15.162638,-8.86651 z M 129.51096,76.186962 c -0.60461,0.002 -0.97836,0.05496 -0.97836,0.05496 l -0.35204,0.05496 -63.575232,-0.08245 22.72395,37.886648 c 2.972496,4.95666 10.085606,8.94815 15.951482,8.94815 h 59.16911 c -9.36539,-16.05997 -21.05146,-36.138214 -24.61413,-42.076226 -2.56502,-4.274725 -6.50765,-4.792787 -8.32259,-4.786851 z"
+                    style="stroke-width:27.4819"
+                />
+            </svg><!-- text-anchor: middle;  -->
+
+            <text
+                dx="${Math.round(iconMargin)}"
+                y="${titleY}"
+                style="font-size: ${titleFontSize}px; font-family: 'Raleway', sans-serif; fill:#${mainColor}; dominant-baseline: middle;"
+            >
+                <tspan
+                    style="font-weight: bold;"
+                >VWS</tspan
+                ><tspan
+                    style="font-family: sans-serif;"
+                > / </tspan
+                ><tspan
+                    dy="-${Math.round(titleFontSize / 10)}"
+                >${name}</tspan>
+            </text>
+        </g>
+
+        <text
+            xml:space="preserve"
+            style="font-size:${descriptionFontSize}px; font-family: sans-serif; fill:#${mainColor}; text-anchor: middle; dominant-baseline: middle;"
+            x="${titleX}"
+            y="190"
+            id="text-description"
+        >${description}</text>
+    </g>
+</svg>
+`
+
+            const container = document.getElementById('container')
+            container.innerHTML = svg
+
+            const el = container.getElementsByTagName('svg')[0]
+
+            const title = el.querySelector('#title')
+
+            title.setAttribute('transform', `translate(${500 - iconMargin / 2 - title.getBoundingClientRect().width / 2}, 0)`)
+
+            svg = el.outerHTML
+
+            document.querySelector('#raw-svg').innerHTML = XMLMinify(svg)
+            document.querySelector('#base64').innerHTML = 'data:image/svg+xml;base64,' + btoa(svg)
+        }
+
+        document.querySelector('#gen').addEventListener('click', update)
+    </script>
+</body>
+
+</html>
