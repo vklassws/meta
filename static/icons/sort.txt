@@ -3,5 +3,7 @@ simple.svg
 vklass-white.svg
 vklass-black.svg
 vklass.svg
+vws-slim-white.svg
+vws-slim-black.svg
 vws-slim.svg
 vws.svg
