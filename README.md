@@ -14,6 +14,8 @@
 <img width="104" src="https://raw.githubusercontent.com/vklassws/meta/main/static/icons/src/vklass-white.svg">
 <img width="104" src="https://raw.githubusercontent.com/vklassws/meta/main/static/icons/src/vklass-black.svg">
 <img width="104" src="https://raw.githubusercontent.com/vklassws/meta/main/static/icons/src/vklass.svg">
+<img width="104" src="https://raw.githubusercontent.com/vklassws/meta/main/static/icons/src/vws-slim-white.svg">
+<img width="104" src="https://raw.githubusercontent.com/vklassws/meta/main/static/icons/src/vws-slim-black.svg">
 <img width="104" src="https://raw.githubusercontent.com/vklassws/meta/main/static/icons/src/vws-slim.svg">
 <img width="104" src="https://raw.githubusercontent.com/vklassws/meta/main/static/icons/src/vws.svg">
 </p>
