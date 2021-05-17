@@ -16,4 +16,4 @@ jobs:
         run: npm run build
 
       - name: Push
-        run: ./scripts/workflow-push.sh
+        run: ./.github/scripts/workflow-push.sh
