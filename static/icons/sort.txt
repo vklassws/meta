@@ -1,0 +1,7 @@
+simple-white.svg
+simple.svg
+vklass-white.svg
+vklass-black.svg
+vklass.svg
+vws-slim.svg
+vws.svg
