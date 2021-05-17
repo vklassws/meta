@@ -92,10 +92,10 @@ function generate(name, description, hue) {
 	})
 }
 
-const banners = fs.readdirSync('static/banners/config').map(json => json.slice(0, -5))
+const banners = fs.readdirSync('static/banners/src').map(json => json.slice(0, -5))
 
 for (const banner of banners) {
-	const configFilePath = `static/banners/config/${banner}.json`
+	const configFilePath = `static/banners/src/${banner}.json`
 	const config = JSON.parse(fs.readFileSync(configFilePath, 'utf-8'))
 	const svgFilePath = `static/banners/dist/${banner}.svg`
 	const base64FilePath = `static/banners/dist/${banner}.b64`
