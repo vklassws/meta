@@ -19,10 +19,4 @@ jobs:
         uses: action-owner/action-repo@ref
 
       - name: Push
-        run: |
-          git config --global user.name "Workflow"
-          git config --global user.email "elias.skogevall@gmail.com"
-
-          git add -A
-          git commit -m "commit message"
-          git push
+        run: ./scripts/workflow-push.sh
