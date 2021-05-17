@@ -6,16 +6,16 @@ async function main() {
 	let readme = '<h1 align="center"><img src="https://raw.githubusercontent.com/vklassws/meta/main/static/banners/dist/meta.svg" alt="VWS Meta - Meta package"></h1>'
 
 	const banners = (await glob('static/banners/dist/*.svg')).map(p => path.parse(p).base)
-	readme += `\n\n## Banners\n${banners.map(banner => {
+	readme += `\n\n## Banners\n<p>\n${banners.map(banner => {
 		const url = `https://raw.githubusercontent.com/vklassws/meta/main/static/banners/dist/${banner}`
-		return `<a href="${url}"><img width="278" src="${url}" /></a>`
-	}).join('\n')}`
+		return `<a href="${url}"><img width="276" src="${url}" /></a>`
+	}).join('\n')}\n</p>`
 
 
 	const sortIcons = fs.readFileSync('static/icons/sort.txt', 'utf-8').split('\n')
 
 	const icons = (await glob('static/icons/src/*')).map(p => path.parse(p).base)
-	readme += `\n\n## Icons\n${icons.slice().sort((a, b) => {
+	readme += `\n\n## Icons\n<p>\n${icons.slice().sort((a, b) => {
 		const asi = sortIcons.indexOf(a)
 		const bsi = sortIcons.indexOf(b)
 
@@ -33,7 +33,7 @@ async function main() {
 	}).map(icon => {
 		const url = `https://raw.githubusercontent.com/vklassws/meta/main/static/icons/src/${icon}`
 		return `<img width="104" src="${url}">`
-	}).join('\n')}`
+	}).join('\n')}\n</p>`
 
 	fs.writeFileSync('README.md', readme)
 }
