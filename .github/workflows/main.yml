@@ -3,7 +3,7 @@ on: push
 
 jobs:
   job1:
-    name: Modifiy repository files
+    name: Build & Push
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -14,9 +14,6 @@ jobs:
 
       - name: Build
         run: npm run build
-
-      - name: Save
-        uses: action-owner/action-repo@ref
 
       - name: Push
         run: ./scripts/workflow-push.sh
